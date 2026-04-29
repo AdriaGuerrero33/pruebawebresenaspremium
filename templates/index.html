@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reseñas Premium · Análisis Google Maps</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <img src="{{ url_for('static', filename='logo.svg') }}" alt="Logo">
+      <div>
+        <h1>Reseñas Premium</h1>
+        <span>Análisis exacto de reseñas de Google Maps</span>
+      </div>
+    </header>
+
+    <section class="hero">
+      <h2>Analiza tu ficha de Google Maps</h2>
+      <p>Pega el enlace de tu negocio y obtén el rating exacto, el desglose por estrellas y cuántas reseñas necesitas para subir de nota.</p>
+      <div class="input-row">
+        <input id="url" type="text" placeholder="https://maps.app.goo.gl/..." autocomplete="off" spellcheck="false">
+        <button id="btn">Analizar</button>
+      </div>
+      <div id="status"></div>
+    </section>
+
+    <section id="results">
+      <div class="grid">
+        <div class="card">
+          <h3>Puntuación exacta</h3>
+          <div class="big-num">
+            <span id="exact" class="gold">—</span>
+          </div>
+          <div class="small-meta">Google muestra: <strong id="displayed">—</strong></div>
+        </div>
+        <div class="card">
+          <h3>Total de reseñas</h3>
+          <div class="big-num"><span id="total">—</span></div>
+          <div class="small-meta" id="total-meta"></div>
+        </div>
+      </div>
+
+      <div class="card histogram">
+        <h3>Desglose por estrellas</h3>
+        <div id="histogram"></div>
+      </div>
+
+      <br>
+
+      <div class="proj-table">
+        <h3>Cuántas reseñas de 5★ te faltan</h3>
+        <p class="desc">Para que Google muestre cada nota, necesitas conseguir estas reseñas perfectas adicionales:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Objetivo</th>
+              <th>Umbral exacto</th>
+              <th>Reseñas de 5★ necesarias</th>
+            </tr>
+          </thead>
+          <tbody id="projections"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      Reseñas Premium · Datos extraídos en tiempo real desde Google Maps
+    </footer>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const btn = $('btn');
+    const status = $('status');
+    const results = $('results');
+
+    function setStatus(msg, isError = false) {
+      status.textContent = msg;
+      status.className = isError ? 'error' : '';
+    }
+
+    function formatNum(n) {
+      if (n === null || n === undefined) return '—';
+      return n.toLocaleString('es-ES');
+    }
+
+    async function analyze() {
+      const url = $('url').value.trim();
+      if (!url) { setStatus('Introduce un enlace de Google Maps', true); return; }
+
+      btn.disabled = true;
+      results.style.display = 'none';
+      setStatus('');
+      status.innerHTML = '<span class="spinner"></span>Analizando ficha de Google Maps (puede tardar 15–30 s)...';
+
+      try {
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error desconocido');
+        render(data);
+        setStatus('Análisis completado ✓');
+      } catch (err) {
+        setStatus(err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function render(data) {
+      $('exact').textContent = data.exact_rating !== null
+        ? data.exact_rating.toFixed(3)
+        : '—';
+      $('displayed').textContent = data.displayed_rating !== null
+        ? data.displayed_rating.toFixed(1)
+        : '—';
+
+      const total = data.total_from_stars || data.scraped_total;
+      $('total').textContent = formatNum(total);
+
+      if (data.scraped_total && data.total_from_stars && data.scraped_total !== data.total_from_stars) {
+        $('total-meta').textContent = `Suma del histograma: ${formatNum(data.total_from_stars)} · Mostrado por Google: ${formatNum(data.scraped_total)}`;
+      } else {
+        $('total-meta').textContent = '';
+      }
+
+      const stars = data.stars || {};
+      const max = Math.max(...Object.values(stars).map(v => v || 0), 1);
+      const histo = $('histogram');
+      histo.innerHTML = '';
+      [5, 4, 3, 2, 1].forEach(n => {
+        const v = stars[n] || 0;
+        const pct = (v / max) * 100;
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `
+          <div class="star">${n}★</div>
+          <div class="bar-bg"><div class="bar-fg" style="width:${pct}%"></div></div>
+          <div class="count">${formatNum(v)}</div>
+        `;
+        histo.appendChild(row);
+      });
+
+      const tbody = $('projections');
+      tbody.innerHTML = '';
+      if (!data.projections || data.projections.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--text-dim);padding:24px">Ya tienes la nota máxima posible.</td></tr>';
+      } else {
+        data.projections.forEach(p => {
+          const tr = document.createElement('tr');
+          if (p.reviews_needed === 0) tr.classList.add('achieved');
+          tr.innerHTML = `
+            <td class="target">${p.target.toFixed(1)} ★</td>
+            <td>${p.threshold.toFixed(2)}</td>
+            <td class="count">${p.reviews_needed === 0 ? 'Ya conseguido ✓' : formatNum(p.reviews_needed) + ' reseñas'}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      results.style.display = 'block';
+    }
+
+    btn.addEventListener('click', analyze);
+    $('url').addEventListener('keydown', e => { if (e.key === 'Enter') analyze(); });
+  </script>
+</body>
+</html>

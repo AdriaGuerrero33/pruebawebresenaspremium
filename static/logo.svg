@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFD86B"/>
+      <stop offset="50%" stop-color="#D4A437"/>
+      <stop offset="100%" stop-color="#9B7A1E"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="24" fill="#0a0a0a"/>
+  <text x="48" y="138" font-family="Georgia, 'Times New Roman', serif" font-size="140" font-weight="700" fill="#ffffff">R</text>
+  <g transform="translate(128 56)">
+    <text x="0" y="0" font-family="Arial, sans-serif" font-size="44" font-weight="700" fill="url(#gold)">+</text>
+    <polygon points="32,8 36,20 48,20 38,28 42,40 32,32 22,40 26,28 16,20 28,20"
+             fill="url(#gold)" transform="translate(-4 14)"/>
+  </g>
+</svg>
