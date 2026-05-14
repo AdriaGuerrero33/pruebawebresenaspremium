@@ -52,7 +52,7 @@ def reviews_needed_for_target(stars: dict, target_displayed: float) -> int | Non
 
 
 def projection_table(stars: dict) -> list[dict]:
-    """Tabla con cuántas reseñas de 5★ faltan para cada hito de 4.4 a 5.0."""
+    """Tabla con cuántas reseñas de 5★ faltan para cada hito desde el rating actual hasta 5.0."""
     rating, total = compute_exact_rating(stars)
     if rating is None:
         return []
@@ -60,7 +60,7 @@ def projection_table(stars: dict) -> list[dict]:
     rows = []
     # Próximo hito redondeado hacia arriba en pasos de 0.1
     current_displayed = round(rating, 1)
-    start = max(4.4, math.floor(current_displayed * 10) / 10 + 0.1)
+    start = math.floor(current_displayed * 10) / 10 + 0.1
 
     target = start
     while target <= 5.0001:
