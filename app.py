@@ -15,6 +15,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/debug")
+def debug_page():
+    return render_template("debug.html")
+
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
     data = request.get_json(silent=True) or {}
