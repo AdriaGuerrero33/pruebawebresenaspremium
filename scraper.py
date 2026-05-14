@@ -2,10 +2,26 @@
 """Google Maps review scraper — extracts rating, total reviews, and star breakdown."""
 
 import sys
+import os
 import re
 import json
+import glob
 import argparse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
+
+def _find_chromium_executable() -> str | None:
+    """Find an available Chromium executable, searching known Playwright browser paths."""
+    candidates = [
+        # Standard Playwright managed path (set via env var or default)
+        *glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"),
+        *glob.glob("/root/.cache/ms-playwright/chromium-*/chrome-linux/chrome"),
+        *glob.glob(os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome")),
+    ]
+    for path in sorted(candidates, reverse=True):  # prefer highest build number
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -58,10 +74,19 @@ def _dismiss_consent(page):
 
 def scrape_google_maps_reviews(url: str, headless: bool = True) -> dict:
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=headless,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--ignore-certificate-errors"],
-        )
+        launch_kwargs: dict = {
+            "headless": headless,
+            "args": ["--no-sandbox", "--disable-setuid-sandbox", "--ignore-certificate-errors"],
+        }
+        # If the default managed browser isn't available, find one on disk
+        try:
+            browser = p.chromium.launch(**launch_kwargs)
+        except Exception:
+            exe = _find_chromium_executable()
+            if exe:
+                print(f"Usando chromium alternativo: {exe}")
+                launch_kwargs["executable_path"] = exe
+            browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(
             locale="es-ES",
             user_agent=(
