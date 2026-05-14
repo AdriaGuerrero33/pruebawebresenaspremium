@@ -21,6 +21,39 @@ def _try_rating(text: str) -> float | None:
     return float(m.group(1).replace(",", ".")) if m else None
 
 
+def _dismiss_consent(page):
+    """Try every known selector for Google's consent/cookie page."""
+    consent_selectors = [
+        # Spanish
+        'button:has-text("Aceptar todo")',
+        'button:has-text("Acepto")',
+        'button:has-text("Aceptar")',
+        # English
+        'button:has-text("Accept all")',
+        'button:has-text("I agree")',
+        'button:has-text("Accept")',
+        # Google consent page stable IDs
+        '#L2AGLb',
+        'button.tHlp8d',
+        '[aria-label="Aceptar todo"]',
+        '[aria-label="Accept all"]',
+        # Fallback: last button in a form (usually the accept button)
+        'form button:last-of-type',
+        'form:has(button) button:last-child',
+    ]
+    for selector in consent_selectors:
+        try:
+            btn = page.locator(selector).first
+            if btn.count() > 0 and btn.is_visible(timeout=1500):
+                btn.click()
+                page.wait_for_timeout(2000)
+                print(f"Consentimiento aceptado con selector: {selector}")
+                return True
+        except Exception:
+            pass
+    return False
+
+
 # ── Core scraper ─────────────────────────────────────────────────────────────
 
 def scrape_google_maps_reviews(url: str, headless: bool = True) -> dict:
@@ -43,75 +76,88 @@ def scrape_google_maps_reviews(url: str, headless: bool = True) -> dict:
         try:
             page.goto(url, wait_until="networkidle", timeout=30000)
         except PlaywrightTimeout:
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-
-        # Dismiss cookies dialog
-        for selector in [
-            'button:has-text("Aceptar todo")',
-            'button:has-text("Accept all")',
-            'button:has-text("Acepto")',
-            'form:has(button) button:last-child',
-        ]:
             try:
-                btn = page.locator(selector).first
-                if btn.is_visible(timeout=2000):
-                    btn.click()
-                    page.wait_for_timeout(1000)
-                    break
-            except Exception:
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            except PlaywrightTimeout:
                 pass
+
+        current_url = page.url
+        print(f"URL tras redirección: {current_url}")
+
+        # Dismiss consent page if shown (consent.google.com or similar)
+        _dismiss_consent(page)
+
+        # If we ended up on a consent page, navigate back to the original URL
+        if "consent.google" in page.url or "accounts.google" in page.url:
+            print("Página de consentimiento detectada, reintentando...")
+            try:
+                page.goto(url, wait_until="networkidle", timeout=30000)
+            except PlaywrightTimeout:
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            _dismiss_consent(page)
+
+        # Click reviews tab if it exists
+        try:
+            for selector in [
+                'button[aria-label*="Reseñas"]',
+                'button[aria-label*="reseñas"]',
+                'button[aria-label*="Reviews"]',
+                'button[data-tab-index="1"]',
+            ]:
+                btn = page.locator(selector).first
+                if btn.count() > 0 and btn.is_visible(timeout=1000):
+                    btn.click()
+                    page.wait_for_timeout(2000)
+                    break
+        except Exception:
+            pass
 
         # Wait for main panel to load
         try:
             page.wait_for_selector('[role="main"]', timeout=15000)
         except PlaywrightTimeout:
             pass
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
 
         result = _extract_data(page)
+        print(f"Resultado del scraper: {result}")
         browser.close()
         return result
 
 
 def _extract_data(page) -> dict:
-    # ── Scroll to load rating histogram ─────────────────────────────────────
-    try:
-        # Click reviews tab if it exists
-        for selector in [
-            'button[aria-label*="Reseñas"]',
-            'button[aria-label*="reseñas"]',
-            'button[aria-label*="Reviews"]',
-            'button[data-tab-index="1"]',
-        ]:
-            btn = page.locator(selector).first
-            if btn.count() > 0 and btn.is_visible(timeout=1000):
-                btn.click()
-                page.wait_for_timeout(2000)
-                break
-    except Exception:
-        pass
-
     body_text = ""
     try:
         body_text = page.inner_text('[role="main"]')
     except Exception:
-        body_text = page.inner_text("body")
+        try:
+            body_text = page.inner_text("body")
+        except Exception:
+            pass
+
+    html_source = ""
+    try:
+        html_source = page.content()
+    except Exception:
+        pass
 
     # ── Rating ───────────────────────────────────────────────────────────────
     rating = None
 
-    # Strategy 1: element with aria-label containing star/estrella + decimal
+    # Strategy 1: aria-label on elements that specifically mention stars/estrellas
     try:
         for el in page.locator('[aria-label]').all():
             label = el.get_attribute("aria-label") or ""
-            r = _try_rating(label)
-            if r:
-                rating = r
-                break
+            # Must mention stars/estrellas to avoid false positives like "4.3 km"
+            if re.search(r"estrella|star", label, re.IGNORECASE):
+                r = _try_rating(label)
+                if r:
+                    rating = r
+                    break
     except Exception:
         pass
 
-    # Strategy 2: standalone "4.3" or "4,3" text node in aria-hidden spans
+    # Strategy 2: standalone "4.3" or "4,3" in aria-hidden spans
     if rating is None:
         try:
             for text in page.locator('span[aria-hidden="true"]').all_text_contents():
@@ -122,26 +168,45 @@ def _extract_data(page) -> dict:
         except Exception:
             pass
 
-    # Strategy 3: scan raw body text
+    # Strategy 3: look for rating in JSON-LD embedded in HTML
+    if rating is None:
+        try:
+            m = re.search(r'"ratingValue"\s*:\s*"?([1-5][.,]\d)"?', html_source)
+            if m:
+                rating = float(m.group(1).replace(",", "."))
+        except Exception:
+            pass
+
+    # Strategy 4: scan raw body text — last resort
     if rating is None:
         rating = _try_rating(body_text)
 
     # ── Total reviews ────────────────────────────────────────────────────────
     total = None
 
-    # Strategy 1: element whose aria-label says "X reseñas / reviews"
+    # Strategy 1: aria-label mentioning reseñas/reviews with a count
     try:
         for el in page.locator('[aria-label]').all():
             label = el.get_attribute("aria-label") or ""
             if re.search(r"rese[ñn]a|review", label, re.IGNORECASE):
-                n = _parse_number(re.sub(r"[^\d]", "", re.split(r"rese[ñn]a|review", label, flags=re.IGNORECASE)[0]))
+                parts = re.split(r"rese[ñn]a|review", label, flags=re.IGNORECASE)
+                n = _parse_number(re.sub(r"[^\d]", "", parts[0]))
                 if n and n > 0:
                     total = n
                     break
     except Exception:
         pass
 
-    # Strategy 2: scan body text for "X reseñas" / "X reviews"
+    # Strategy 2: JSON-LD reviewCount
+    if total is None:
+        try:
+            m = re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', html_source)
+            if m:
+                total = int(m.group(1))
+        except Exception:
+            pass
+
+    # Strategy 3: scan body text for "X reseñas" / "X reviews"
     if total is None:
         for pattern in [
             r"([\d][\d.,\s]*)\s*rese[ñn]as?",
@@ -170,14 +235,30 @@ def _extract_data(page) -> dict:
     except Exception:
         pass
 
-    # Strategy 2: parse histogram from body text
-    # Google Maps usually shows: "5\n[bar]\n1.234\n4\n[bar]\n987\n..."
+    # Strategy 2: look in table rows or structured data in aria-labels without "review" keyword
+    # Some versions show "5 estrellas, 123" without "reseñas"
+    if len(stars) < 3:
+        try:
+            for el in page.locator('[aria-label]').all():
+                label = el.get_attribute("aria-label") or ""
+                m = re.match(
+                    r"(\d)\s*(?:estrella[s]?|star[s]?)[,:\s]+(\d[\d.,]*)",
+                    label,
+                    re.IGNORECASE,
+                )
+                if m:
+                    star_n = int(m.group(1))
+                    if star_n not in stars:
+                        stars[star_n] = _parse_number(m.group(2))
+        except Exception:
+            pass
+
+    # Strategy 3: parse histogram from body text
     if len(stars) < 3:
         lines = [l.strip() for l in body_text.splitlines() if l.strip()]
         for i, line in enumerate(lines):
             if re.fullmatch(r"[1-5]", line):
                 star_n = int(line)
-                # The count is usually a few lines ahead
                 for j in range(i + 1, min(i + 6, len(lines))):
                     n = _parse_number(lines[j])
                     if n and n > 0 and star_n not in stars:
