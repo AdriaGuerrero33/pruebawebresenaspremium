@@ -72,11 +72,19 @@ def _dismiss_consent(page):
 
 # ── Core scraper ─────────────────────────────────────────────────────────────
 
-def scrape_google_maps_reviews(url: str, headless: bool = True) -> dict:
+def scrape_google_maps_reviews(url: str, headless: bool = True, debug: bool = False) -> dict:
     with sync_playwright() as p:
         launch_kwargs: dict = {
             "headless": headless,
-            "args": ["--no-sandbox", "--disable-setuid-sandbox", "--ignore-certificate-errors"],
+            "args": [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--ignore-certificate-errors",
+                # Anti-bot detection flags
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-infobars",
+            ],
         }
         # If the default managed browser isn't available, find one on disk
         try:
@@ -87,41 +95,55 @@ def scrape_google_maps_reviews(url: str, headless: bool = True) -> dict:
                 print(f"Usando chromium alternativo: {exe}")
                 launch_kwargs["executable_path"] = exe
             browser = p.chromium.launch(**launch_kwargs)
+
         context = browser.new_context(
             locale="es-ES",
+            timezone_id="Europe/Madrid",
+            viewport={"width": 1280, "height": 800},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
+            extra_http_headers={
+                "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            },
+        )
+        # Mask navigator.webdriver to avoid bot detection
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         page = context.new_page()
 
         print(f"Abriendo: {url}")
         try:
-            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.goto(url, wait_until="networkidle", timeout=45000)
         except PlaywrightTimeout:
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
             except PlaywrightTimeout:
                 pass
 
-        current_url = page.url
-        print(f"URL tras redirección: {current_url}")
+        print(f"URL tras redirección: {page.url}")
 
-        # Dismiss consent page if shown (consent.google.com or similar)
+        # Dismiss consent page if shown
         _dismiss_consent(page)
 
-        # If we ended up on a consent page, navigate back to the original URL
+        # If we ended up on a consent/accounts page, navigate back
         if "consent.google" in page.url or "accounts.google" in page.url:
             print("Página de consentimiento detectada, reintentando...")
             try:
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                page.goto(url, wait_until="networkidle", timeout=45000)
             except PlaywrightTimeout:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                except PlaywrightTimeout:
+                    pass
             _dismiss_consent(page)
 
-        # Click reviews tab if it exists
+        print(f"URL final: {page.url}")
+
+        # Click reviews tab if visible
         try:
             for selector in [
                 'button[aria-label*="Reseñas"]',
@@ -137,16 +159,25 @@ def scrape_google_maps_reviews(url: str, headless: bool = True) -> dict:
         except Exception:
             pass
 
-        # Wait for main panel to load
+        # Wait for main panel
         try:
             page.wait_for_selector('[role="main"]', timeout=15000)
         except PlaywrightTimeout:
             pass
         page.wait_for_timeout(3000)
 
+        screenshot_b64 = None
+        if debug:
+            import base64
+            screenshot_b64 = base64.b64encode(page.screenshot(full_page=False)).decode()
+
         result = _extract_data(page)
-        print(f"Resultado del scraper: {result}")
+        print(f"Resultado del scraper: rating={result.get('rating')}, total={result.get('total_reviews')}, stars={result.get('stars')}")
+
         browser.close()
+        if debug:
+            result["_debug_url"] = page.url
+            result["_debug_screenshot"] = screenshot_b64
         return result
 
 

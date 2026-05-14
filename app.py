@@ -50,6 +50,27 @@ def analyze():
     )
 
 
+@app.route("/api/debug", methods=["POST"])
+def debug():
+    """Igual que /api/analyze pero devuelve screenshot y URL final para diagnosticar el scraper."""
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "Falta el enlace"}), 400
+    try:
+        scraped = scrape_google_maps_reviews(url, headless=True, debug=True)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "debug_url": scraped.get("_debug_url"),
+        "rating": scraped.get("rating"),
+        "total_reviews": scraped.get("total_reviews"),
+        "stars": scraped.get("stars"),
+        "screenshot_b64": scraped.get("_debug_screenshot"),
+    })
+
+
 @app.route("/health")
 def health():
     return {"status": "ok"}
