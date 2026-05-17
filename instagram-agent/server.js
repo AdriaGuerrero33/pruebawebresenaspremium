@@ -6,25 +6,30 @@ const { load: loadConfig, save: saveConfig } = require('./config');
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
-// Optional basic-auth — set DASHBOARD_PASSWORD in Railway
+// Landing page is always public
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+// Auth middleware — only protects /panel and /api/*
 const PASS = process.env.DASHBOARD_PASSWORD;
-if (PASS) {
-  app.use((req, res, next) => {
-    const auth = req.headers.authorization || '';
-    if (!auth.startsWith('Basic ')) {
-      res.set('WWW-Authenticate', 'Basic realm="Agent Dashboard"');
-      return res.status(401).send('Login required');
-    }
-    const [, pass] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
-    if (pass !== PASS) {
-      res.set('WWW-Authenticate', 'Basic realm="Agent Dashboard"');
-      return res.status(401).send('Wrong password');
-    }
-    next();
-  });
+function requireAuth(req, res, next) {
+  if (!PASS) return next();
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="Agent Panel"');
+    return res.status(401).send('Panel protegido — introduce la contraseña');
+  }
+  const [, pass] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
+  if (pass !== PASS) {
+    res.set('WWW-Authenticate', 'Basic realm="Agent Panel"');
+    return res.status(401).send('Contraseña incorrecta');
+  }
+  next();
 }
+
+app.get('/panel', requireAuth, (req, res) => res.sendFile(path.join(__dirname, 'public', 'panel.html')));
+app.use('/api', requireAuth);
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Config ────────────────────────────────────────────────────
 app.get('/api/config', (req, res) => res.json(loadConfig()));
