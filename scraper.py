@@ -80,6 +80,10 @@ def scrape_google_maps_reviews(url: str, headless: bool = True, debug: bool = Fa
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--ignore-certificate-errors",
+                # Critical in Docker/Railway: /dev/shm is tiny (64MB) and Chromium
+                # crashes silently without this, returning empty data.
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
                 # Anti-bot detection flags
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=IsolateOrigins,site-per-process",
@@ -113,6 +117,20 @@ def scrape_google_maps_reviews(url: str, headless: bool = True, debug: bool = Fa
         context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
+
+        # Pre-set the SOCS consent cookie so Google skips the cookie wall entirely.
+        # This is the most reliable way to avoid the consent page on datacenter IPs,
+        # where the clickable consent dialog is often the point of failure.
+        _socs = "CAISHAgBEhJnd3NfMjAyMzA4MDktMF9SQzEaAmVzIAEaBgiA_LynBg"
+        context.add_cookies([
+            {"name": "SOCS", "value": _socs, "domain": ".google.com",
+             "path": "/", "secure": True, "sameSite": "None"},
+            {"name": "SOCS", "value": _socs, "domain": ".google.es",
+             "path": "/", "secure": True, "sameSite": "None"},
+            {"name": "CONSENT", "value": "YES+", "domain": ".google.com",
+             "path": "/", "secure": True, "sameSite": "None"},
+        ])
+
         page = context.new_page()
 
         print(f"Abriendo: {url}")
