@@ -39,6 +39,18 @@ def analyze():
 
     stars = {int(k): v for k, v in (scraped.get("stars") or {}).items() if v is not None}
 
+    # If nothing useful was extracted, the scrape failed (cookie wall, bot block,
+    # or Google serving an empty page to the datacenter IP). Don't pretend success.
+    if not stars and not scraped.get("rating") and not scraped.get("total_reviews"):
+        return jsonify({
+            "error": (
+                "No se pudieron extraer datos de esta ficha. Google puede estar "
+                "bloqueando el servidor o el enlace no apunta a un negocio con "
+                "reseñas. Prueba con la URL larga de Google Maps (no la acortada) "
+                "o usa /debug para ver qué está pasando."
+            )
+        }), 502
+
     exact, total = compute_exact_rating(stars)
     projections = projection_table(stars) if stars else []
 
