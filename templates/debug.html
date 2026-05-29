@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Debug · Reseñas Premium</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+    input { width: 70%; padding: 8px; font-size: 14px; background: #222; color: #eee; border: 1px solid #555; }
+    button { padding: 8px 16px; background: #c8960c; color: #000; border: none; cursor: pointer; font-weight: bold; }
+    pre { background: #1a1a1a; padding: 16px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+    img { max-width: 100%; border: 2px solid #c8960c; margin-top: 16px; }
+    .label { color: #c8960c; font-weight: bold; margin-top: 16px; display: block; }
+    #status { margin: 10px 0; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h2>🔍 Debug del Scraper</h2>
+  <p>Esto muestra exactamente qué ve el navegador al analizar tu enlace.</p>
+  <input id="url" type="text" value="https://maps.app.goo.gl/wgb6wuuaXd3LC7Xa8" />
+  <button onclick="runDebug()">Analizar (puede tardar 30-60s)</button>
+  <div id="status"></div>
+  <div id="result"></div>
+
+  <script>
+    async function runDebug() {
+      const url = document.getElementById('url').value.trim();
+      document.getElementById('status').textContent = '⏳ Analizando... espera hasta 60 segundos';
+      document.getElementById('result').innerHTML = '';
+      try {
+        const res = await fetch('/api/debug', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+        document.getElementById('status').textContent = '✅ Hecho';
+
+        let html = '';
+        html += '<span class="label">URL final (después de redirecciones):</span>';
+        html += '<pre>' + (data.debug_url || 'No disponible') + '</pre>';
+        html += '<span class="label">Datos extraídos:</span>';
+        html += '<pre>' + JSON.stringify({ rating: data.rating, total_reviews: data.total_reviews, stars: data.stars }, null, 2) + '</pre>';
+        if (data.screenshot_b64) {
+          html += '<span class="label">Captura de pantalla de lo que ve el scraper:</span>';
+          html += '<img src="data:image/png;base64,' + data.screenshot_b64 + '" />';
+        } else {
+          html += '<span class="label">Sin captura de pantalla</span>';
+        }
+        if (data.error) {
+          html += '<span class="label">Error:</span><pre>' + data.error + '</pre>';
+        }
+        document.getElementById('result').innerHTML = html;
+      } catch (e) {
+        document.getElementById('status').textContent = '❌ Error: ' + e.message;
+      }
+    }
+  </script>
+</body>
+</html>

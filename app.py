@@ -15,6 +15,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/debug")
+def debug_page():
+    return render_template("debug.html")
+
+
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
     data = request.get_json(silent=True) or {}
@@ -34,6 +39,18 @@ def analyze():
 
     stars = {int(k): v for k, v in (scraped.get("stars") or {}).items() if v is not None}
 
+    # If nothing useful was extracted, the scrape failed (cookie wall, bot block,
+    # or Google serving an empty page to the datacenter IP). Don't pretend success.
+    if not stars and not scraped.get("rating") and not scraped.get("total_reviews"):
+        return jsonify({
+            "error": (
+                "No se pudieron extraer datos de esta ficha. Google puede estar "
+                "bloqueando el servidor o el enlace no apunta a un negocio con "
+                "reseñas. Prueba con la URL larga de Google Maps (no la acortada) "
+                "o usa /debug para ver qué está pasando."
+            )
+        }), 502
+
     exact, total = compute_exact_rating(stars)
     projections = projection_table(stars) if stars else []
 
@@ -48,6 +65,27 @@ def analyze():
             "projections": projections,
         }
     )
+
+
+@app.route("/api/debug", methods=["POST"])
+def debug():
+    """Igual que /api/analyze pero devuelve screenshot y URL final para diagnosticar el scraper."""
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "Falta el enlace"}), 400
+    try:
+        scraped = scrape_google_maps_reviews(url, headless=True, debug=True)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "debug_url": scraped.get("_debug_url"),
+        "rating": scraped.get("rating"),
+        "total_reviews": scraped.get("total_reviews"),
+        "stars": scraped.get("stars"),
+        "screenshot_b64": scraped.get("_debug_screenshot"),
+    })
 
 
 @app.route("/health")
