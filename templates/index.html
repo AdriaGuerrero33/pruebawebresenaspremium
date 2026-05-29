@@ -43,9 +43,12 @@
         </div>
       </div>
 
-      <div class="card histogram">
+      <div class="card histogram" id="histogram-card">
         <h3>Desglose por estrellas</h3>
         <div id="histogram"></div>
+        <div id="histogram-note" style="display:none;margin-top:12px;font-size:0.82rem;color:var(--text-dim)">
+          El desglose por estrellas no está disponible vía API oficial. Las proyecciones se calculan desde la nota media.
+        </div>
       </div>
 
       <br>
@@ -130,22 +133,29 @@
         $('total-meta').textContent = '';
       }
 
+      const usingApi = data.data_source === 'places_api';
       const stars = data.stars || {};
-      const max = Math.max(...Object.values(stars).map(v => v || 0), 1);
+      const hasStars = Object.values(stars).some(v => v > 0);
+
+      $('histogram-note').style.display = usingApi ? 'block' : 'none';
+
       const histo = $('histogram');
       histo.innerHTML = '';
-      [5, 4, 3, 2, 1].forEach(n => {
-        const v = stars[n] || 0;
-        const pct = (v / max) * 100;
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.innerHTML = `
-          <div class="star">${n}★</div>
-          <div class="bar-bg"><div class="bar-fg" style="width:${pct}%"></div></div>
-          <div class="count">${formatNum(v)}</div>
-        `;
-        histo.appendChild(row);
-      });
+      if (hasStars) {
+        const max = Math.max(...Object.values(stars).map(v => v || 0), 1);
+        [5, 4, 3, 2, 1].forEach(n => {
+          const v = stars[n] || 0;
+          const pct = (v / max) * 100;
+          const row = document.createElement('div');
+          row.className = 'row';
+          row.innerHTML = `
+            <div class="star">${n}★</div>
+            <div class="bar-bg"><div class="bar-fg" style="width:${pct}%"></div></div>
+            <div class="count">${formatNum(v)}</div>
+          `;
+          histo.appendChild(row);
+        });
+      }
 
       const tbody = $('projections');
       tbody.innerHTML = '';

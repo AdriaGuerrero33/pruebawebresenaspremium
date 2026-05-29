@@ -84,3 +84,39 @@ def displayed_rating(exact: float | None) -> float | None:
     if exact is None:
         return None
     return round(exact + 1e-9, 1)
+
+
+def reviews_needed_from_rating(current_rating: float, current_total: int, target_displayed: float) -> int | None:
+    """Same as reviews_needed_for_target but only needs average + total, no histogram."""
+    if not current_total:
+        return None
+    threshold = round(target_displayed - 0.05, 4)
+    if target_displayed >= 5.0:
+        threshold = 4.95
+    if current_rating >= threshold:
+        return 0
+    denom = 5.0 - threshold
+    if denom <= 0:
+        return None
+    n = (threshold - current_rating) * current_total / denom
+    return max(0, math.ceil(n))
+
+
+def projection_table_from_rating(current_rating: float, current_total: int) -> list[dict]:
+    """Same as projection_table but works without the star breakdown histogram."""
+    if not current_rating or not current_total:
+        return []
+    rows = []
+    start = math.floor(round(current_rating, 1) * 10) / 10 + 0.1
+    target = start
+    while target <= 5.0001:
+        target = round(target, 2)
+        n = reviews_needed_from_rating(current_rating, current_total, target)
+        if n is not None:
+            rows.append({
+                "target": target,
+                "threshold": round(target - 0.05, 3) if target < 5.0 else 4.95,
+                "reviews_needed": n,
+            })
+        target += 0.1
+    return rows
